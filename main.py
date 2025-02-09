@@ -1,41 +1,47 @@
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
 import json
+import httpx
+from datetime import datetime, UTC
+from lxml import html
+from typing import List, Dict
 
-app = FastAPI()
 
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-)
+def scrape_imdb() -> List[Dict[str, str]]:
+    """Scrape IMDb Top 250 movies using httpx and lxml.
 
-# Load student data from the specified JSON file
-file_path = "q-vercel-python_2.json"
+    Returns:
+        List of dictionaries containing movie title, year, and rating.
+    """
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; IMDbBot/1.0)"}
+    response = httpx.get("https://www.imdb.com/chart/top/", headers=headers)
+    response.raise_for_status()
 
-try:
-    with open(file_path, "r") as file:
-        students = json.load(file)  # Load data into `students`
-except FileNotFoundError:
-    students = []  # Default to an empty list if the file is missing
+    tree = html.fromstring(response.text)
+    movies = []
 
-# Convert list of students to a dictionary for quick lookup
-students_dict = {entry["name"]: entry["marks"] for entry in students}
+    for item in tree.cssselect(".ipc-metadata-list-summary-item"):
+        title = (
+            item.cssselect(".ipc-title__text")[0].text_content()
+            if item.cssselect(".ipc-title__text")
+            else None
+        )
+        year = (
+            item.cssselect(".cli-title-metadata span")[0].text_content()
+            if item.cssselect(".cli-title-metadata span")
+            else None
+        )
+        rating = (
+            item.cssselect(".ipc-rating-star")[0].text_content()
+            if item.cssselect(".ipc-rating-star")
+            else None
+        )
 
-@app.get("/")
-async def get_students(name: Optional[List[str]] = Query(default=[])):
-    """Fetch student marks based on optional name filtering while maintaining order."""
-    if name:
-        # Preserve the order in which names are passed
-        filtered_marks = [students_dict.get(n, None) for n in name]
-        return {"marks": filtered_marks}
-    
-    return {"marks": students}  # Return all data if no filter is applied
+        if title and year and rating:
+            movies.append({"title": title, "year": year, "rating": rating})
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    return movies
+
+
+# Scrape data and save with timestamp
+now = datetime.now(UTC)
+with open(f'imdb-top250-{now.strftime("%Y-%m-%d")}.json', "a") as f:
+    f.write(json.dumps({"timestamp": now.isoformat(), "movies": scrape_imdb()}) + "\n")
